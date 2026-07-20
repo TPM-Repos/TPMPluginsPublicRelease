@@ -4,8 +4,8 @@ Install and update TPM DriveWorks plugins.
 
 ## Quick Install
 
-1. Download `install.bat` and `install.ps1` from this repository
-2. Right-click `install.bat` and select **Run as administrator**
+1. Download `install-update.bat` and `install-update.ps1` from this repository
+2. Right-click `install-update.bat` and select **Run as administrator**
 3. Follow the on-screen prompts to select and install plugins
 
 The installer will:
@@ -38,7 +38,7 @@ The installer will:
 
 ## Updating Plugins
 
-Re-run `install.ps1` from your install directory (the installer copies itself there during installation). It will detect installed versions and show available updates.
+Re-run `install-update.ps1` from your install directory (the installer copies itself there during installation). It will detect installed versions and show available updates.
 
 ## License Setup
 

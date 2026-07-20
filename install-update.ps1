@@ -419,7 +419,7 @@ if ($needsLicense -and (-not (Test-Path $licenseFile))) {
 # -- Copy installer to install directory for future updates --
 $selfPath = $PSCommandPath
 if ($selfPath) {
-    $destInstaller = Join-Path $installDir "install.ps1"
+    $destInstaller = Join-Path $installDir "install-update.ps1"
     if ($selfPath -ne $destInstaller) {
         try {
             Copy-Item $selfPath $destInstaller -Force
@@ -450,7 +450,7 @@ Write-Host "    3. Click Install and browse to the install directory" -Foregroun
 Write-Host "    4. Select the plugin DLLs you want to enable" -ForegroundColor White
 Write-Host "    5. Restart DriveWorks" -ForegroundColor White
 Write-Host ""
-Write-Host "  To check for updates later, re-run install.ps1 from" -ForegroundColor DarkGray
+Write-Host "  To check for updates later, re-run install-update.ps1 from" -ForegroundColor DarkGray
 Write-Host ("  " + $installDir) -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  To check plugin status in DriveWorks, use:" -ForegroundColor DarkGray
