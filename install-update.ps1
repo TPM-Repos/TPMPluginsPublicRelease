@@ -416,14 +416,22 @@ if ($needsLicense -and (-not (Test-Path $licenseFile))) {
     }
 }
 
-# -- Copy installer to install directory for future updates --
+# -- Copy installer files to install directory for future updates --
 $selfPath = $PSCommandPath
 if ($selfPath) {
-    $destInstaller = Join-Path $installDir "install-update.ps1"
-    if ($selfPath -ne $destInstaller) {
+    $selfDir = Split-Path $selfPath -Parent
+    $destPs1 = Join-Path $installDir "install-update.ps1"
+    $destBat = Join-Path $installDir "install-update.bat"
+    $srcBat = Join-Path $selfDir "install-update.bat"
+
+    if ($selfPath -ne $destPs1) {
         try {
-            Copy-Item $selfPath $destInstaller -Force
-            Unblock-File $destInstaller -ErrorAction SilentlyContinue
+            Copy-Item $selfPath $destPs1 -Force
+            Unblock-File $destPs1 -ErrorAction SilentlyContinue
+            if (Test-Path $srcBat) {
+                Copy-Item $srcBat $destBat -Force
+                Unblock-File $destBat -ErrorAction SilentlyContinue
+            }
             Write-Host ("  Installer copied to " + $installDir + " for future updates.") -ForegroundColor DarkGray
         } catch {
             Write-Host "  WARNING: Could not copy installer to install directory." -ForegroundColor Yellow
