@@ -1,25 +1,31 @@
-﻿<#
+<#
 .SYNOPSIS
     TPM Plugins Installer & Updater
 .DESCRIPTION
     Downloads and installs TPM DriveWorks plugins from GitHub Releases.
     Detects already-installed plugins and shows available updates.
     Handles license file setup and DLL unblocking.
-    No additional tools required - uses direct GitHub API downloads.
+    Requires GitHub CLI (gh) authenticated with access to TPM-Repos.
 #>
 
 param(
-    [string]$GithubRepo = "TPM-Repos/TPMPluginsPublicRelease",
+    [string]$GithubRepo = "TPM-Repos/TPMPlugins",
     [string]$LicenseServerUrl = "https://license.tpmautomation.com"
 )
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$GithubApiBase = "https://api.github.com/repos/$GithubRepo"
-
 # -- Plugin definitions --
 $Plugins = @(
+    @{
+        Name        = "TPMLicensing"
+        DisplayName = "TPM Licensing Plugin (required for licensed plugins)"
+        TagPrefix   = "TPMLicensing"
+        ProductId   = "TPMPlugins.TPMLicensing"
+        PrimaryDll  = "TPMLicensingPlugin.dll"
+        Licensed    = $false
+    },
     @{
         Name        = "TPMSPP"
         DisplayName = "TPM SPP - Stored Procedure Parameters"
@@ -82,33 +88,21 @@ function Get-InstalledVersion {
     return $null
 }
 
-function Get-LatestReleaseFromApi {
+function Get-LatestRelease {
     param([string]$TagPrefix)
     try {
-        $url = $GithubApiBase + "/releases"
-        $headers = @{ "User-Agent" = "TPMPluginInstaller" }
-        $releases = Invoke-RestMethod -Uri $url -Headers $headers -Method Get -ErrorAction Stop
+        $releases = gh release list --repo $GithubRepo --limit 50 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
 
-        foreach ($rel in $releases) {
-            $tag = $rel.tag_name
-            if ($tag -match "^$TagPrefix`_V(\d+\.\d+\.\d+)$") {
-                $assets = @()
-                foreach ($asset in $rel.assets) {
-                    $assets += @{
-                        Name = $asset.name
-                        Url  = $asset.browser_download_url
-                    }
-                }
+        foreach ($line in $releases -split "`n") {
+            if ($line -match "$TagPrefix`_V(\d+\.\d+\.\d+)") {
                 return @{
                     Version = $Matches[1]
-                    Tag     = $tag
-                    Assets  = $assets
+                    Tag     = "$TagPrefix`_V$($Matches[1])"
                 }
             }
         }
-    } catch {
-        # API call failed - likely no internet or rate limited
-    }
+    } catch {}
     return $null
 }
 
@@ -127,21 +121,41 @@ function Compare-Versions {
     }
 }
 
-function Download-File {
-    param([string]$Url, [string]$OutPath)
-    $wc = New-Object System.Net.WebClient
-    $wc.Headers.Add("User-Agent", "TPMPluginInstaller")
-    $wc.DownloadFile($Url, $OutPath)
-    $wc.Dispose()
-}
-
 # -- Banner --
 Clear-Host
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor Cyan
-Write-Host "       TPM Plugins Installer and Updater          " -ForegroundColor Cyan
+Write-Host "       TPM Plugins Install / Update               " -ForegroundColor Cyan
 Write-Host "  ================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# -- Check GitHub CLI --
+$ghCheck = gh --version 2>$null
+if (-not $?) {
+    Write-Host "  ERROR: GitHub CLI is required but not installed." -ForegroundColor Red
+    Write-Host "  Download from: https://cli.github.com/" -ForegroundColor Yellow
+    Write-Host ""
+    Read-Host "  Press Enter to exit"
+    exit 1
+}
+
+$authCheck = gh auth status 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  GitHub CLI is not authenticated. You need access to the TPM-Repos organization." -ForegroundColor Yellow
+    Write-Host ""
+    $doAuth = Read-Host "  Log in to GitHub now? Y/n"
+    if ($doAuth -eq 'n') {
+        Write-Host "  Cannot proceed without GitHub authentication." -ForegroundColor Red
+        Read-Host "  Press Enter to exit"
+        exit 1
+    }
+    gh auth login
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ERROR: GitHub authentication failed." -ForegroundColor Red
+        Read-Host "  Press Enter to exit"
+        exit 1
+    }
+}
 
 # -- Get install directory --
 $defaultPath = "C:\Program Files\DriveWorks\TPMPlugins"
@@ -174,15 +188,13 @@ $pluginStatus = @()
 foreach ($plugin in $Plugins) {
     $dllPath = Join-Path $installDir $plugin.PrimaryDll
     $installed = Get-InstalledVersion $dllPath
-    $latest = Get-LatestReleaseFromApi $plugin.TagPrefix
+    $latest = Get-LatestRelease $plugin.TagPrefix
 
     $latestVer = $null
     $latestTag = $null
-    $latestAssets = @()
     if ($latest) {
         $latestVer = $latest.Version
         $latestTag = $latest.Tag
-        $latestAssets = $latest.Assets
     }
 
     $status = @{
@@ -190,7 +202,6 @@ foreach ($plugin in $Plugins) {
         InstalledVersion = $installed
         LatestVersion    = $latestVer
         LatestTag        = $latestTag
-        LatestAssets     = $latestAssets
         IsInstalled      = ($null -ne $installed)
         UpdateAvailable  = $false
         Action           = "Not available"
@@ -325,35 +336,30 @@ $failedCount = 0
 
 foreach ($s in $selectedPlugins) {
     $plugin = $s.Plugin
+    $tag = $s.LatestTag
     $actionLabel = "Installing"
     if ($s.IsInstalled) { $actionLabel = "Updating" }
 
     Write-Host ("  " + $actionLabel + " " + $plugin.DisplayName + " V" + $s.LatestVersion + "...") -ForegroundColor White
 
+    # Download all assets from the release to temp
     $pluginTemp = Join-Path $tempDir $plugin.Name
     New-Item -ItemType Directory -Path $pluginTemp -Force | Out-Null
 
-    $downloadFailed = $false
-    foreach ($asset in $s.LatestAssets) {
-        if ($asset.Name -notlike "*.dll") { continue }
-        $outFile = Join-Path $pluginTemp $asset.Name
-        try {
-            Write-Host ("    Downloading " + $asset.Name + "...") -ForegroundColor DarkGray
-            Download-File $asset.Url $outFile
-        } catch {
-            Write-Host ("    ERROR: Failed to download " + $asset.Name) -ForegroundColor Red
-            $downloadFailed = $true
-            break
+    try {
+        gh release download $tag --repo $GithubRepo --dir $pluginTemp --pattern "*.dll" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Download failed"
         }
-    }
-
-    if ($downloadFailed) {
+    } catch {
+        Write-Host ("    ERROR: Failed to download release " + $tag) -ForegroundColor Red
         $failedCount++
         continue
     }
 
     # Copy downloaded files to install directory
     $downloadedFiles = Get-ChildItem $pluginTemp -Filter "*.dll"
+    $copyFailed = $false
     foreach ($file in $downloadedFiles) {
         try {
             Copy-Item $file.FullName (Join-Path $installDir $file.Name) -Force
@@ -361,12 +367,12 @@ foreach ($s in $selectedPlugins) {
             Write-Host ("    ERROR: Failed to copy " + $file.Name + " - file may be locked.") -ForegroundColor Red
             Write-Host "    Close DriveWorks and try again." -ForegroundColor Yellow
             $failedCount++
-            $downloadFailed = $true
+            $copyFailed = $true
             break
         }
     }
 
-    if ($downloadFailed) { continue }
+    if ($copyFailed) { continue }
 
     # Unblock all copied DLLs
     $downloadedFiles | ForEach-Object {
@@ -410,6 +416,21 @@ if ($needsLicense -and (-not (Test-Path $licenseFile))) {
     }
 }
 
+# -- Copy installer to install directory for future updates --
+$selfPath = $PSCommandPath
+if ($selfPath) {
+    $destInstaller = Join-Path $installDir "install.ps1"
+    if ($selfPath -ne $destInstaller) {
+        try {
+            Copy-Item $selfPath $destInstaller -Force
+            Unblock-File $destInstaller -ErrorAction SilentlyContinue
+            Write-Host ("  Installer copied to " + $installDir + " for future updates.") -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  WARNING: Could not copy installer to install directory." -ForegroundColor Yellow
+        }
+    }
+}
+
 # -- Summary --
 Write-Host ""
 Write-Host "  ================================================" -ForegroundColor DarkGray
@@ -428,6 +449,9 @@ Write-Host "    2. Go to Settings, Plugin Settings" -ForegroundColor White
 Write-Host "    3. Click Install and browse to the install directory" -ForegroundColor White
 Write-Host "    4. Select the plugin DLLs you want to enable" -ForegroundColor White
 Write-Host "    5. Restart DriveWorks" -ForegroundColor White
+Write-Host ""
+Write-Host "  To check for updates later, re-run install.ps1 from" -ForegroundColor DarkGray
+Write-Host ("  " + $installDir) -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  To check plugin status in DriveWorks, use:" -ForegroundColor DarkGray
 Write-Host "    =TPMLicensePluginVersionCheck" -ForegroundColor DarkGray
