@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 
 # Version of this installer. Keep in sync with the release tag (V<version>)
 # published at https://github.com/TPM-Repos/TPMPluginsPublicRelease/releases
-$InstallerVersion = "1.1.0"
+$InstallerVersion = "1.1.1"
 $InstallerRepo = "TPM-Repos/TPMPluginsPublicRelease"
 
 # -- Plugin definitions --
